@@ -610,16 +610,27 @@
   }
   function setStatus(t, warn){ $('status').textContent = t; $('status').classList.toggle('warn', !!warn); $('openSp').classList.toggle('hidden', !warn); }
 
+  // Gewähltes Gerät bleibt fest – es wird nie automatisch auf ein anderes gewechselt
   async function loadDevices(){
     try {
       const j = await api('/me/player/devices');
       const devs = j?.devices || [];
-      const saved = store.get('device');
-      deviceId = (devs.find(d=>d.id===saved) || devs.find(d=>d.is_active) || devs[0])?.id || null;
-      $('devSel').innerHTML = devs.length
-        ? devs.map(d=>`<option value="${esc(d.id)}" ${d.id===deviceId?'selected':''}>🔊 ${esc(d.name)} (${esc(d.type)})</option>`).join('') + '<option value="__r">↻ Geräte neu laden</option>'
-        : '<option value="__r">Kein Gerät – Spotify öffnen, dann hier tippen</option>';
-      $('devMsg').textContent = devs.length ? 'Wiedergabe über Spotify Connect.' : 'Spotify-App auf iPad/Handy/Box öffnen und kurz irgendwas abspielen.';
+      const saved = store.get('device'), savedName = store.get('deviceName');
+      let missing = false;
+      if (saved){
+        const hit = devs.find(d=>d.id===saved) || (savedName && devs.find(d=>d.name===savedName));
+        if (hit){ deviceId = hit.id; if (hit.id!==saved) store.set('device', hit.id); }
+        else { deviceId = null; missing = true; }
+      } else {
+        const pick = devs.find(d=>d.is_active) || devs[0];
+        deviceId = pick?.id || null;
+        if (pick){ store.set('device', pick.id); store.set('deviceName', pick.name); }
+      }
+      let opts = devs.map(d=>`<option value="${esc(d.id)}" ${d.id===deviceId?'selected':''}>🔊 ${esc(d.name)} (${esc(d.type)})</option>`).join('');
+      if (missing) opts = `<option value="" selected>⚠️ ${esc(savedName||'Gewähltes Gerät')} nicht erreichbar</option>` + opts;
+      $('devSel').innerHTML = (opts || '<option value="">Kein Gerät gefunden</option>') + '<option value="__r">↻ Geräte neu laden</option>';
+      $('devMsg').textContent = missing ? `${savedName||'Das gewählte Gerät'} ist gerade nicht erreichbar – Spotify-App dort öffnen und neu laden, oder anderes Gerät wählen.`
+        : devs.length ? 'Gerät bleibt fest ausgewählt. Bluetooth-Box: einfach das Gerät wählen, mit dem sie verbunden ist.' : 'Spotify-App auf iPad/Handy öffnen und kurz irgendwas abspielen.';
     } catch(e){ $('devMsg').textContent = 'Geräte konnten nicht geladen werden: ' + e.message; }
   }
   // fromStart=false: pausierten Song an gleicher Stelle fortsetzen
@@ -668,7 +679,12 @@
   $('btnPlay').onclick = e => { e.stopPropagation(); playing ? pause() : play(); };
   $('btnPause').onclick = () => playing ? pause() : play();
   $('btnReplay').onclick = () => play(true);
-  $('devSel').onchange = e => { if (e.target.value==='__r') return loadDevices(); deviceId = e.target.value; loadedUri = null; store.set('device', deviceId); };
+  $('devSel').onchange = e => {
+    if (e.target.value==='__r' || !e.target.value) return loadDevices();
+    deviceId = e.target.value; loadedUri = null;
+    store.set('device', deviceId); store.set('deviceName', e.target.selectedOptions[0].textContent.replace(/^🔊 /,'').replace(/ \([^)]*\)$/,''));
+    loadDevices();
+  };
   $('btnMenu').onclick = () => $('ovMenu').classList.remove('hidden');
   $('mResume').onclick = () => $('ovMenu').classList.add('hidden');
   $('mSkip').onclick = () => { $('ovMenu').classList.add('hidden'); nextCard(); };
