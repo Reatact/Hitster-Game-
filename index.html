@@ -93,7 +93,9 @@
   .result{font-size:22px;font-weight:900;text-align:center;padding:12px;border-radius:14px}
   .result.ok{background:#0f2e1c;color:#7ef0ad}
   .result.bad{background:#3a1220;color:#ffb3c8}
-  .status{text-align:center;font-size:14px;color:var(--muted);min-height:18px}
+  .status{text-align:center;font-size:15px;color:var(--muted);min-height:18px}
+  .status.warn{color:#ffd27a;font-weight:700}
+  .openSp{display:block;text-align:center;margin-top:8px;padding:12px;border-radius:14px;background:var(--green);color:#0f0d1a;font-weight:800;text-decoration:none}
   .teambtns{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
   .teambtns button{color:#0f0d1a}
 
@@ -221,6 +223,7 @@
         </div>
         <div class="actions" id="actions"></div>
         <div class="status" id="status" style="margin-top:10px"></div>
+        <a class="openSp hidden" id="openSp" href="spotify:">Spotify-App öffnen</a>
         <div class="row" style="margin-top:10px">
           <button class="sec small" id="btnPause">⏸ Pause</button>
           <button class="sec small" id="btnReplay">↺ Von vorn</button>
@@ -283,7 +286,7 @@
   // Display wach halten
   let wakeLock = null;
   async function keepAwake(){ try { if ('wakeLock' in navigator && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release',()=>wakeLock=null); } } catch {} }
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState==='visible' && !$('viewGame').classList.contains('hidden')) keepAwake(); });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState==='visible' && !$('viewGame').classList.contains('hidden')) { keepAwake(); if (typeof loadDevices==='function') loadDevices(); } });
 
   // ---------- Auth (PKCE) ----------
   const b64url = buf => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
@@ -605,7 +608,7 @@
     $('icoPlay').innerHTML = p ? '<path d="M6 5h4v14H6zM14 5h4v14h-4z"/>' : '<path d="M8 5v14l11-7z"/>';
     $('btnPause').textContent = p ? '⏸ Pause' : '▶ Weiter';
   }
-  function setStatus(t){ $('status').textContent = t; }
+  function setStatus(t, warn){ $('status').textContent = t; $('status').classList.toggle('warn', !!warn); $('openSp').classList.toggle('hidden', !warn); }
 
   async function loadDevices(){
     try {
@@ -620,18 +623,29 @@
     } catch(e){ $('devMsg').textContent = 'Geräte konnten nicht geladen werden: ' + e.message; }
   }
   // fromStart=false: pausierten Song an gleicher Stelle fortsetzen
-  async function play(fromStart){
+  async function play(fromStart, retried){
     const c = cur(); if (!c) return;
     const resume = !fromStart && loadedUri === c.uri;
-    if (!deviceId){ await loadDevices(); if (!deviceId) return setStatus('Kein Spotify-Gerät verfügbar.'); }
+    if (!deviceId){ await loadDevices(); if (!deviceId) return setStatus('Kein Spotify-Gerät gefunden. Spotify-App öffnen, kurz einen Song starten, zurückkommen und erneut auf Play tippen.', true); }
     try {
       await api(`/me/player/play?device_id=${encodeURIComponent(deviceId)}`, resume ? {method:'PUT'} : {method:'PUT', body:JSON.stringify({uris:[c.uri]})});
       loadedUri = c.uri;
       setPlaying(true); setStatus(resume ? 'Weiter…' : 'Läuft…');
     } catch(e){
-      if (e.status===404){ deviceId=null; loadedUri=null; await loadDevices(); setStatus('Gerät nicht aktiv – Spotify-App öffnen und erneut tippen.'); }
-      else if (e.status===403) setStatus('Wiedergabe abgelehnt (Premium nötig?).');
-      else setStatus('Fehler: '+e.message);
+      if ((e.status===404 || e.status===502 || e.status===500) && !retried){
+        // Gerät eingeschlafen: neu suchen, Wiedergabe dorthin übertragen, nochmal versuchen
+        setStatus('Verbinde mit Spotify…');
+        await loadDevices();
+        if (deviceId){
+          try { await api('/me/player', {method:'PUT', body:JSON.stringify({device_ids:[deviceId], play:false})}); } catch {}
+          await new Promise(r=>setTimeout(r, 700));
+          return play(resume ? false : true, true);
+        }
+        setStatus('Spotify ist eingeschlafen. Spotify-App öffnen, kurz einen Song starten, zurückkommen und erneut auf Play tippen.', true);
+      }
+      else if (e.status===404){ loadedUri=null; setStatus('Spotify ist eingeschlafen. Spotify-App öffnen, kurz einen Song starten, zurückkommen und erneut auf Play tippen.', true); }
+      else if (e.status===403) setStatus('Wiedergabe abgelehnt (' + e.message + ').', true);
+      else setStatus('Fehler: '+e.message, true);
     }
   }
   async function pause(silent){
