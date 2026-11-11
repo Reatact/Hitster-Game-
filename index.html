@@ -583,7 +583,7 @@
   function nextCard(){
     G.idx++; G.team = null; G.slot = null; G.lastResult = null; G.phase = 'listen';
     save(); render(); setPlaying(false); setStatus('');
-    if (G.autoplay && cur()) play();
+    if (G.autoplay && cur()) play(true);
   }
   function undoLast(){
     const h = G.history.pop(); if (!h) return setStatus('Nichts rückgängig zu machen.');
@@ -599,10 +599,11 @@
   }
 
   // ---------- Playback ----------
-  let playing = false, deviceId = store.get('device');
+  let playing = false, loadedUri = null, deviceId = store.get('device');
   function setPlaying(p){
     playing = p;
     $('icoPlay').innerHTML = p ? '<path d="M6 5h4v14H6zM14 5h4v14h-4z"/>' : '<path d="M8 5v14l11-7z"/>';
+    $('btnPause').textContent = p ? '⏸ Pause' : '▶ Weiter';
   }
   function setStatus(t){ $('status').textContent = t; }
 
@@ -618,14 +619,17 @@
       $('devMsg').textContent = devs.length ? 'Wiedergabe über Spotify Connect.' : 'Spotify-App auf iPad/Handy/Box öffnen und kurz irgendwas abspielen.';
     } catch(e){ $('devMsg').textContent = 'Geräte konnten nicht geladen werden: ' + e.message; }
   }
-  async function play(){
+  // fromStart=false: pausierten Song an gleicher Stelle fortsetzen
+  async function play(fromStart){
     const c = cur(); if (!c) return;
+    const resume = !fromStart && loadedUri === c.uri;
     if (!deviceId){ await loadDevices(); if (!deviceId) return setStatus('Kein Spotify-Gerät verfügbar.'); }
     try {
-      await api(`/me/player/play?device_id=${encodeURIComponent(deviceId)}`, {method:'PUT', body:JSON.stringify({uris:[c.uri]})});
-      setPlaying(true); setStatus('Läuft…');
+      await api(`/me/player/play?device_id=${encodeURIComponent(deviceId)}`, resume ? {method:'PUT'} : {method:'PUT', body:JSON.stringify({uris:[c.uri]})});
+      loadedUri = c.uri;
+      setPlaying(true); setStatus(resume ? 'Weiter…' : 'Läuft…');
     } catch(e){
-      if (e.status===404){ deviceId=null; await loadDevices(); setStatus('Gerät nicht aktiv – Spotify-App öffnen und erneut tippen.'); }
+      if (e.status===404){ deviceId=null; loadedUri=null; await loadDevices(); setStatus('Gerät nicht aktiv – Spotify-App öffnen und erneut tippen.'); }
       else if (e.status===403) setStatus('Wiedergabe abgelehnt (Premium nötig?).');
       else setStatus('Fehler: '+e.message);
     }
@@ -648,9 +652,9 @@
   $('btnTeamsBack').onclick = () => show('viewPlaylists');
   $('btnStart').onclick = startGame;
   $('btnPlay').onclick = e => { e.stopPropagation(); playing ? pause() : play(); };
-  $('btnPause').onclick = () => pause();
-  $('btnReplay').onclick = play;
-  $('devSel').onchange = e => { if (e.target.value==='__r') return loadDevices(); deviceId = e.target.value; store.set('device', deviceId); };
+  $('btnPause').onclick = () => playing ? pause() : play();
+  $('btnReplay').onclick = () => play(true);
+  $('devSel').onchange = e => { if (e.target.value==='__r') return loadDevices(); deviceId = e.target.value; loadedUri = null; store.set('device', deviceId); };
   $('btnMenu').onclick = () => $('ovMenu').classList.remove('hidden');
   $('mResume').onclick = () => $('ovMenu').classList.add('hidden');
   $('mSkip').onclick = () => { $('ovMenu').classList.add('hidden'); nextCard(); };
